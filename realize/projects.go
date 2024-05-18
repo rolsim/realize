@@ -54,7 +54,6 @@ type Project struct {
 	watcher    FileWatcher
 	stop       chan bool
 	exit       chan os.Signal
-	paths      []string
 	last       last
 	files      int64
 	folders    int64
@@ -125,8 +124,14 @@ func (p *Project) Before() {
 	p.cmd(p.stop, "before", true)
 	// indexing files and dirs
 	for _, dir := range p.Watcher.Paths {
-		base, _ := filepath.Abs(p.Path)
-		base = filepath.Join(base, dir)
+		base := ""
+		dir = os.ExpandEnv(dir)
+		if filepath.IsAbs(dir) {
+			base = dir
+		} else {
+			path, _ := filepath.Abs(os.ExpandEnv(p.Path))
+			base = filepath.Join(path, dir)
+		}
 		if _, err := os.Stat(base); err == nil {
 			if err := filepath.Walk(base, p.walk); err != nil {
 				p.Err(err)
@@ -407,7 +412,7 @@ func (p *Project) pname(name string, color int) string {
 	return name
 }
 
-//  Tool logs the result of a go command
+// Tool logs the result of a go command
 func (p *Project) tools(stop <-chan bool, path string, fi os.FileInfo) {
 	done := make(chan bool)
 	result := make(chan Response)
@@ -529,7 +534,12 @@ func (p *Project) stamp(t string, o BufferOut, msg string, stream string) {
 	case "out":
 		p.Buffer.StdOut = append(p.Buffer.StdOut, o)
 		if p.parent.Settings.Files.Outputs.Status {
-			f := p.parent.Settings.Create(p.Path, p.parent.Settings.Files.Outputs.Name)
+			path := p.parent.Settings.Files.Outputs.Path
+			path = os.ExpandEnv(path)
+			if !filepath.IsAbs(path) {
+				path = filepath.Join(p.Path, path)
+			}
+			f := p.parent.Settings.Create(path, p.parent.Settings.Files.Outputs.Name)
 			if _, err := f.WriteString(strings.Join(content, " ")); err != nil {
 				p.parent.Settings.Fatal(err, "")
 			}
@@ -537,7 +547,12 @@ func (p *Project) stamp(t string, o BufferOut, msg string, stream string) {
 	case "log":
 		p.Buffer.StdLog = append(p.Buffer.StdLog, o)
 		if p.parent.Settings.Files.Logs.Status {
-			f := p.parent.Settings.Create(p.Path, p.parent.Settings.Files.Logs.Name)
+			path := p.parent.Settings.Files.Logs.Path
+			path = os.ExpandEnv(path)
+			if !filepath.IsAbs(path) {
+				path = filepath.Join(p.Path, path)
+			}
+			f := p.parent.Settings.Create(path, p.parent.Settings.Files.Logs.Name)
 			if _, err := f.WriteString(strings.Join(content, " ")); err != nil {
 				p.parent.Settings.Fatal(err, "")
 			}
@@ -545,7 +560,12 @@ func (p *Project) stamp(t string, o BufferOut, msg string, stream string) {
 	case "error":
 		p.Buffer.StdErr = append(p.Buffer.StdErr, o)
 		if p.parent.Settings.Files.Errors.Status {
-			f := p.parent.Settings.Create(p.Path, p.parent.Settings.Files.Errors.Name)
+			path := p.parent.Settings.Files.Errors.Path
+			path = os.ExpandEnv(path)
+			if !filepath.IsAbs(path) {
+				path = filepath.Join(p.Path, path)
+			}
+			f := p.parent.Settings.Create(path, p.parent.Settings.Files.Errors.Name)
 			if _, err := f.WriteString(strings.Join(content, " ")); err != nil {
 				p.parent.Settings.Fatal(err, "")
 			}
@@ -602,20 +622,24 @@ func (p *Project) run(path string, stream chan Response, stop <-chan bool) (err 
 		})
 		args = append(args, a...)
 	}
-	dirPath := os.Getenv("GOBIN")
-	if p.Tools.Run.Path != "" {
-		dirPath, _ = filepath.Abs(p.Tools.Run.Path)
-	}
-	name := filepath.Base(path)
-	if path == "." && p.Tools.Run.Path == "" {
-		name = filepath.Base(Wdir())
-	} else if p.Tools.Run.Path != "" {
-		name = filepath.Base(dirPath)
-	}
-	path = filepath.Join(dirPath, name)
+
 	if p.Tools.Run.Method != "" {
 		path = p.Tools.Run.Method
+	} else {
+		dirPath := os.Getenv("GOBIN")
+		if p.Tools.Run.Path != "" {
+			dirPath, _ = filepath.Abs(p.Tools.Run.Path)
+		}
+		name := filepath.Base(path)
+		if path == "." && p.Tools.Run.Path == "" {
+			name = filepath.Base(Wdir())
+		} else if p.Tools.Run.Path != "" {
+			name = filepath.Base(dirPath)
+		}
+		path = filepath.Join(dirPath, name)
 	}
+	path = os.ExpandEnv(path)
+
 	if _, err := os.Stat(path); err == nil {
 		build = exec.Command(path, args...)
 	} else if _, err := os.Stat(path + RExtWin); err == nil {
@@ -641,6 +665,7 @@ func (p *Project) run(path string, stream chan Response, stop <-chan bool) (err 
 	}
 	if p.Tools.Run.Dir != "" {
 		build.Dir = p.Tools.Run.Dir
+		build.Dir = os.ExpandEnv(build.Dir)
 	}
 	if err := build.Start(); err != nil {
 		return err

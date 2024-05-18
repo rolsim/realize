@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/ioutil"
 	"log"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -12,15 +13,15 @@ import (
 
 // Tool info
 type Tool struct {
-	Args   []string `yaml:"args,omitempty" json:"args,omitempty"`
-	Method string   `yaml:"method,omitempty" json:"method,omitempty"`
-	Path   string   `yaml:"path,omitempty" json:"path,omitempty"`
-	Dir    string   `yaml:"dir,omitempty" json:"dir,omitempty"` //wdir of the command
-	Status bool     `yaml:"status,omitempty" json:"status,omitempty"`
-	Output bool     `yaml:"output,omitempty" json:"output,omitempty"`
+	Env    map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+	Args   []string          `yaml:"args,omitempty" json:"args,omitempty"`
+	Method string            `yaml:"method,omitempty" json:"method,omitempty"`
+	Path   string            `yaml:"path,omitempty" json:"path,omitempty"`
+	Dir    string            `yaml:"dir,omitempty" json:"dir,omitempty"` //wdir of the command
+	Status bool `yaml:"status,omitempty" json:"status,omitempty"`
+	Output bool `yaml:"output,omitempty" json:"output,omitempty"`
 	dir    bool
 	isTool bool
-	method []string
 	cmd    []string
 	name   string
 	parent *Project
@@ -52,7 +53,7 @@ func (t *Tools) Setup() {
 	if t.Clean.Status {
 		t.Clean.name = "Clean"
 		t.Clean.isTool = true
-		t.Clean.cmd = replace([]string{gocmd, "clean"}, t.Clean.Method)
+		t.Clean.cmd = replace([]string{gocmd, "clean"}, os.ExpandEnv(t.Clean.Method))
 		t.Clean.Args = split([]string{}, t.Clean.Args)
 	}
 	// go generate
@@ -60,7 +61,7 @@ func (t *Tools) Setup() {
 		t.Generate.dir = true
 		t.Generate.isTool = true
 		t.Generate.name = "Generate"
-		t.Generate.cmd = replace([]string{gocmd, "generate"}, t.Generate.Method)
+		t.Generate.cmd = replace([]string{gocmd, "generate"}, os.ExpandEnv(t.Generate.Method))
 		t.Generate.Args = split([]string{}, t.Generate.Args)
 	}
 	// go fmt
@@ -70,7 +71,7 @@ func (t *Tools) Setup() {
 		}
 		t.Fmt.name = "Fmt"
 		t.Fmt.isTool = true
-		t.Fmt.cmd = replace([]string{"gofmt"}, t.Fmt.Method)
+		t.Fmt.cmd = replace([]string{"gofmt"}, os.ExpandEnv(t.Fmt.Method))
 		t.Fmt.Args = split([]string{}, t.Fmt.Args)
 	}
 	// go vet
@@ -78,7 +79,7 @@ func (t *Tools) Setup() {
 		t.Vet.dir = true
 		t.Vet.name = "Vet"
 		t.Vet.isTool = true
-		t.Vet.cmd = replace([]string{gocmd, "vet"}, t.Vet.Method)
+		t.Vet.cmd = replace([]string{gocmd, "vet"}, os.ExpandEnv(t.Vet.Method))
 		t.Vet.Args = split([]string{}, t.Vet.Args)
 	}
 	// go test
@@ -86,17 +87,17 @@ func (t *Tools) Setup() {
 		t.Test.dir = true
 		t.Test.isTool = true
 		t.Test.name = "Test"
-		t.Test.cmd = replace([]string{gocmd, "test"}, t.Test.Method)
+		t.Test.cmd = replace([]string{gocmd, "test"}, os.ExpandEnv(t.Test.Method))
 		t.Test.Args = split([]string{}, t.Test.Args)
 	}
 	// go install
 	t.Install.name = "Install"
-	t.Install.cmd = replace([]string{gocmd, "install"}, t.Install.Method)
+	t.Install.cmd = replace([]string{gocmd, "install"}, os.ExpandEnv(t.Install.Method))
 	t.Install.Args = split([]string{}, t.Install.Args)
 	// go build
 	if t.Build.Status {
 		t.Build.name = "Build"
-		t.Build.cmd = replace([]string{gocmd, "build"}, t.Build.Method)
+		t.Build.cmd = replace([]string{gocmd, "build"}, os.ExpandEnv(t.Build.Method))
 		t.Build.Args = split([]string{}, t.Build.Args)
 	}
 }
@@ -140,6 +141,7 @@ func (t *Tool) Exec(path string, stop <-chan bool) (response Response) {
 		} else {
 			cmd.Dir = path
 		}
+		cmd.Dir = os.ExpandEnv(cmd.Dir)
 		cmd.Stdout = &out
 		cmd.Stderr = &stderr
 		// Start command
@@ -175,13 +177,29 @@ func (t *Tool) Compile(path string, stop <-chan bool) (response Response) {
 	var out bytes.Buffer
 	var stderr bytes.Buffer
 	done := make(chan error)
-	args := append(t.cmd, t.Args...)
+	// args := append(t.cmd, t.Args...)
+	args := []string{}
+	args = append(args, t.cmd...)
+	for _, a := range t.Args {
+		// fmt.Println("arg:", a)
+		a = os.ExpandEnv(a)
+		// fmt.Println("    ", a)
+		args = append(args, a)
+	}
 	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Env = os.Environ()
+	for k, v := range t.Env {
+		// fmt.Println("env:", k, v)
+		v = os.ExpandEnv(v)
+		// fmt.Println("    ", k, v)
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
 	if t.Dir != "" {
 		cmd.Dir, _ = filepath.Abs(t.Dir)
 	} else {
 		cmd.Dir = path
 	}
+	cmd.Dir = os.ExpandEnv(cmd.Dir)
 	cmd.Stdout = &out
 	cmd.Stderr = &stderr
 	// Start command
